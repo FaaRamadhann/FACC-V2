@@ -485,9 +485,7 @@ public class MainActivity extends Activity {
                 public void onClick(View v) {
                     sortMode = mode;
                     refreshAppsList();
-                    Toast.makeText(MainActivity.this,
-                            "Sort: " + sorts[mode],
-                            Toast.LENGTH_SHORT).show();
+                    toast("Sort: " + sorts[mode]);
                 }
             });
             sortRow.addView(b);
@@ -626,8 +624,7 @@ public class MainActivity extends Activity {
                     startActivity(new Intent(Intent.ACTION_VIEW,
                             Uri.parse(GITHUB_URL)));
                 } catch (Exception e) {
-                    Toast.makeText(MainActivity.this,
-                            GITHUB_URL, Toast.LENGTH_LONG).show();
+                    toastLong(GITHUB_URL);
                 }
             }
         });
@@ -704,9 +701,7 @@ public class MainActivity extends Activity {
                 @Override
                 public void onClick(View v2) {
                     prefs.edit().putInt("interval", v).apply();
-                    Toast.makeText(MainActivity.this,
-                            "Interval: " + v + " min",
-                            Toast.LENGTH_SHORT).show();
+                    toast("Interval: " + v + " min");
                     if (moduleOk) {
                         new Thread(new Runnable() {
                             @Override
@@ -926,8 +921,7 @@ public class MainActivity extends Activity {
             return;
         }
         if (!moduleOk && !rooted) {
-            Toast.makeText(this, "Scan butuh root + module FACC V2",
-                    Toast.LENGTH_SHORT).show();
+            toast("Scan butuh root + module FACC V2");
             return;
         }
         scanning = true;
@@ -1012,16 +1006,12 @@ public class MainActivity extends Activity {
                             refreshAppsList();
                             updateHome();
                             homeScanText.setText("Scan completed");
-                            Toast.makeText(MainActivity.this,
-                                    "Scan completed: " + withCache[0]
-                                            + " apps, "
-                                            + humanSize(total[0]),
-                                    Toast.LENGTH_SHORT).show();
+                            toast("Scan completed: " + withCache[0]
+                                    + " apps, "
+                                    + humanSize(total[0]));
                         } else {
                             homeScanText.setText("Scan failed");
-                            Toast.makeText(MainActivity.this,
-                                    "Scan gagal. Pastikan module FACC V2 terpasang.",
-                                    Toast.LENGTH_LONG).show();
+                            toastLong("Scan gagal. Pastikan module FACC V2 terpasang.");
                         }
                     }
                 });
@@ -1372,15 +1362,12 @@ public class MainActivity extends Activity {
 
     private void onCleanPressed() {
         if (!moduleOk) {
-            Toast.makeText(this,
-                    "Cleaning butuh root + module FACC V2",
-                    Toast.LENGTH_LONG).show();
+            toastLong("Cleaning butuh root + module FACC V2");
             return;
         }
         final List<AppEntry> sel = selectedApps();
         if (sel.isEmpty()) {
-            Toast.makeText(this, "Tidak ada cache yang dipilih",
-                    Toast.LENGTH_SHORT).show();
+            toast("Tidak ada cache yang dipilih");
             return;
         }
         long total = 0;
@@ -1551,10 +1538,8 @@ public class MainActivity extends Activity {
                         if (prefs.getBoolean("show_result", true)) {
                             showResult(before, fFreed, fDone);
                         } else {
-                            Toast.makeText(MainActivity.this,
-                                    "Cleaning completed: "
-                                            + humanSize(fFreed),
-                                    Toast.LENGTH_SHORT).show();
+                            toast("Cleaning completed: "
+                                    + humanSize(fFreed));
                         }
                     }
                 });
@@ -1576,6 +1561,27 @@ public class MainActivity extends Activity {
     }
 
     // ================= Util =================
+
+    /** Toast aman dari thread mana pun (selalu via UI thread). */
+    private void toast(final String msg) {
+        toastLen(msg, Toast.LENGTH_SHORT);
+    }
+
+    private void toastLong(final String msg) {
+        toastLen(msg, Toast.LENGTH_LONG);
+    }
+
+    private void toastLen(final String msg, final int len) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Toast.makeText(MainActivity.this, msg, len).show();
+                } catch (Exception ignored) {
+                }
+            }
+        });
+    }
 
     /** Format bytes ala facc_human_size (GB/MB/KB/B). */
     private static String humanSize(long b) {
