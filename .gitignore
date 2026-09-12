@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Build output (zip di-build lokal ke build/, distribusi via Releases)
+build/
+*.zip
+!manager.apk
+
+# Referensi repo V1 (clone mentah, tidak ikut di-pack ke zip module)
+Magisk-FACC/
+
+# Keystore dev (jangan commit key asli; debug key boleh bila perlu)
+*.keystore
+*.jks
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
