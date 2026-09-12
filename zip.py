@@ -90,6 +90,8 @@ def should_skip(path: pathlib.Path, module_dir: pathlib.Path) -> bool:
     if path.is_file():
         if path.name in EXCLUDE_FILES:
             return True
+        if path.name.startswith("session-"):
+            return True
         if path.suffix in EXCLUDE_SUFFIXES:
             return True
     return False
