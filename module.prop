@@ -1,6 +1,6 @@
-id=facc2
-name=Faa App Cache Cleaner (FACC) V2
+id=faacc
+name=Faa Agresive App Cache Cleaner
 version=v1.0.0
 versionCode=10000
 author=Faa Ramadhan
-description=Pembersih cache aplikasi yang aman. Tanpa hapus data, tanpa pm clear. Dilengkapi aplikasi manager, auto-clean terjadwal, dan log lengkap.
+description=Pembersih cache AGRESIF: cache internal, code_cache, dan cache eksternal. Tanpa hapus data, tanpa pm clear. Dilengkapi aplikasi manager dan auto-clean terjadwal. Perhatian: mode agresif, baca catatan dulu.

@@ -1,4 +1,4 @@
-package com.faa.facc;
+package com.faa.faacc;
 
 import android.app.Activity;
 import android.app.AlertDialog;
@@ -46,10 +46,11 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * FACC Manager — App Cache Cleaner (FACC V2).
+ * FAACC Manager — Faa Agresive App Cache Cleaner.
  * Style: Light Blue Sea, utility bersih. 3 tab: Home / Apps / Settings.
  *
- * Data & aksi via CLI module (root): su -c "facc --scan --json" dkk.
+ * Mode AGRESIF: membersihkan cache internal + code_cache + cache eksternal.
+ * Data & aksi via CLI module (root): su -c "faacc --scan --json" dkk.
  * Tanpa root/module: tetap tampilkan daftar aplikasi (ukuran cache "-").
  */
 public class MainActivity extends Activity {
@@ -66,8 +67,8 @@ public class MainActivity extends Activity {
     private static final int DARK_CARD = 0xFF122836;
     private static final int DARK_TEXT = 0xFFE8F4F8;
 
-    private static final String PREFS = "facc";
-    private static final String GITHUB_URL = "https://github.com/FaaRamadhann/FACC-V2";
+    private static final String PREFS = "faacc";
+    private static final String GITHUB_URL = "https://github.com/FaaRamadhann/FAACC";
 
     // ---------- Model ----------
     private static class AppEntry {
@@ -250,7 +251,7 @@ public class MainActivity extends Activity {
         LinearLayout title = new LinearLayout(this);
         title.setOrientation(LinearLayout.VERTICAL);
         TextView t1 = new TextView(this);
-        t1.setText("FACC");
+        t1.setText("FAACC");
         t1.setTextSize(22);
         t1.setTextColor(darkMode ? DARK_TEXT : TEXT_DARK);
         try {
@@ -258,7 +259,7 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) {
         }
         TextView t2 = new TextView(this);
-        t2.setText("App Cache Cleaner");
+        t2.setText("Aggressive Cache Cleaner");
         t2.setTextSize(13);
         t2.setTextColor(TEXT_GRAY);
         title.addView(t1);
@@ -347,14 +348,36 @@ public class MainActivity extends Activity {
         homeNotice.setVisibility(View.GONE);
         card.addView(homeNotice);
 
+        LinearLayout btnRow = new LinearLayout(this);
+        btnRow.setOrientation(LinearLayout.HORIZONTAL);
+        btnRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        rlp.setMargins(0, dp(12), 0, 0);
+        btnRow.setLayoutParams(rlp);
+
+        Button scan = new Button(this);
+        scan.setText("\u21BB SCAN");
+        scan.setTextColor(accentColor);
+        scan.setBackgroundColor(Color.TRANSPARENT);
+        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        scan.setLayoutParams(slp);
+        scan.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                scanCache();
+            }
+        });
+        btnRow.addView(scan);
+
         Button clean = new Button(this);
         clean.setText("CLEAN CACHE");
         clean.setTextColor(Color.WHITE);
         clean.setBackgroundColor(ACCENT);
         LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        blp.setMargins(0, dp(12), 0, 0);
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f);
         clean.setLayoutParams(blp);
         clean.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -362,7 +385,8 @@ public class MainActivity extends Activity {
                 onCleanPressed();
             }
         });
-        card.addView(clean);
+        btnRow.addView(clean);
+        card.addView(btnRow);
 
         homeStats = new TextView(this);
         homeStats.setTextSize(13);
@@ -611,8 +635,15 @@ public class MainActivity extends Activity {
         // ABOUT
         LinearLayout c4 = makeCard();
         c4.addView(smallLabel("ABOUT"));
-        c4.addView(infoRow("FACC Manager", "App Cache Cleaner V2"));
+        c4.addView(infoRow("FAACC Manager", "Aggressive Cache Cleaner"));
         c4.addView(infoRow("Version", "1.0.0"));
+        TextView warn = new TextView(this);
+        warn.setText("Mode AGRESIF: menghapus cache internal + code_cache + "
+                + "cache eksternal. App bisa recompile ulang setelah clean.");
+        warn.setTextSize(12);
+        warn.setTextColor(0xFFB45309);
+        warn.setPadding(0, dp(4), 0, dp(4));
+        c4.addView(warn);
         Button gh = new Button(this);
         gh.setText("GitHub");
         gh.setTextColor(ACCENT_DARK);
@@ -707,7 +738,7 @@ public class MainActivity extends Activity {
                             @Override
                             public void run() {
                                 RootShell.exec(
-                                        "facc --autoclean " + v, 15000);
+                                        "faacc --autoclean " + v, 15000);
                             }
                         }).start();
                     }
@@ -867,11 +898,11 @@ public class MainActivity extends Activity {
         if (!rooted) {
             homeNotice.setVisibility(View.VISIBLE);
             homeNotice.setText(
-                    "Butuh root + module FACC V2. Menampilkan daftar aplikasi saja.");
+                    "Butuh root + module FAACC. Menampilkan daftar aplikasi saja.");
         } else if (!moduleOk) {
             homeNotice.setVisibility(View.VISIBLE);
             homeNotice.setText(
-                    "Module FACC V2 tidak terdeteksi. Install module lalu scan ulang.");
+                    "Module FAACC tidak terdeteksi. Install module lalu scan ulang.");
         } else {
             homeNotice.setVisibility(View.GONE);
         }
@@ -921,7 +952,7 @@ public class MainActivity extends Activity {
             return;
         }
         if (!moduleOk && !rooted) {
-            toast("Scan butuh root + module FACC V2");
+            toast("Scan butuh root + module FAACC");
             return;
         }
         scanning = true;
@@ -935,8 +966,10 @@ public class MainActivity extends Activity {
         new Thread(new Runnable() {
             @Override
             public void run() {
+                // Scan agresif bisa lama (ratusan app x 3 lokasi) — 10 menit.
                 RootShell.Result r = RootShell.exec(
-                        "facc --scan --json", 120000);
+                        "faacc --scan --json", 600000);
+                final boolean timedOut = (r != null && r.timedOut);
                 final List<AppEntry> list = new ArrayList<AppEntry>();
                 final long[] total = {0};
                 final int[] withCache = {0};
@@ -1011,7 +1044,11 @@ public class MainActivity extends Activity {
                                     + humanSize(total[0]));
                         } else {
                             homeScanText.setText("Scan failed");
-                            toastLong("Scan gagal. Pastikan module FACC V2 terpasang.");
+                            if (timedOut) {
+                                toastLong("Scan timeout (>10 mnt). Coba tekan SCAN lagi.");
+                            } else {
+                                toastLong("Scan gagal. Pastikan module FAACC terpasang.");
+                            }
                         }
                     }
                 });
@@ -1362,7 +1399,7 @@ public class MainActivity extends Activity {
 
     private void onCleanPressed() {
         if (!moduleOk) {
-            toastLong("Cleaning butuh root + module FACC V2");
+            toastLong("Cleaning butuh root + module FAACC");
             return;
         }
         final List<AppEntry> sel = selectedApps();
@@ -1478,7 +1515,7 @@ public class MainActivity extends Activity {
                         break;
                     }
                     RootShell.Result r = RootShell.exec(
-                            "facc --clean " + e.pkg + " --json", 60000);
+                            "faacc --clean " + e.pkg + " --json", 180000);
                     boolean ok = r != null && r.code == 0;
                     long f = 0;
                     if (ok && r.out.startsWith("{")) {
@@ -1583,7 +1620,7 @@ public class MainActivity extends Activity {
         });
     }
 
-    /** Format bytes ala facc_human_size (GB/MB/KB/B). */
+    /** Format bytes ala faacc_human_size (GB/MB/KB/B). */
     private static String humanSize(long b) {
         if (b < 0) {
             return "—";

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.faa.facc"
+    package="com.faa.faacc"
     android:versionCode="10000"
     android:versionName="1.0.0">
 
@@ -13,7 +13,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
-        android:label="FACC"
+        android:label="FAACC"
         android:icon="@drawable/icon"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:allowBackup="true">

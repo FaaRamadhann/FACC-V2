@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Pack repo ini menjadi zip module Magisk FACC V2 (anti-bug backslash).
+"""Pack repo ini menjadi zip module Magisk FAACC (anti-bug backslash).
 
-Repo root = module root: module.prop ada di sini (id=facc2).
+Repo root = module root: module.prop ada di sini (id=faacc).
 
 Pakai:
-    python zip.py              -> output build/FACC2-v<version>.zip
+    python zip.py              -> output build/FAACC-v<version>.zip
     python zip.py -o out.zip   -> output build/out.zip (atau path absolut)
-    python zip.py --no-version -> output build/FACC2.zip tanpa versi
+    python zip.py --no-version -> output build/FAACC.zip tanpa versi
 
 Prasyarat: manager.apk sudah ada di root (hasil manager/build.py|build.bat,
 disalin ke sini). customize.sh memasangnya saat instalasi module.
@@ -43,20 +43,21 @@ REQUIRED = [
     "service.sh",
     "action.sh",
     "manager.apk",
-    "system/bin/facc",
+    "system/bin/faacc",
     "common/core.sh",
     "common/logger.sh",
-    "config/facc.conf",
+    "config/faacc.conf",
     "webroot/index.html",
 ]
 
 # File/dir yang dikecualikan dari zip (bukan bagian module).
-# "Magisk-FACC" = clone referensi V1; "manager" = source APK (APK jadi
-# sudah ada di root sebagai manager.apk); "build" = output lokal.
+# "Magisk-FACC" = clone referensi repo lama; "manager" = source APK (APK jadi
+# sudah ada di root sebagai manager.apk); "build" = output lokal;
+# "cc.sh" = script referensi user, bukan bagian module.
 EXCLUDE_DIRS = {"temp", "__pycache__", ".git", ".hg", ".svn", "archive",
                 "build", "Magisk-FACC", "manager"}
 EXCLUDE_FILES = {".DS_Store", "Thumbs.db", "zip.py", ".gitignore",
-                 ".gitattributes",
+                 ".gitattributes", "cc.sh",
                  "9e248764-ec06-4ec3-a8ac-d3de33513368.jpg"}
 EXCLUDE_SUFFIXES = {".pyc", ".pyo", ".zip"}
 
@@ -66,7 +67,7 @@ EXECUTABLES = {
     "uninstall.sh",
     "service.sh",
     "action.sh",
-    "system/bin/facc",
+    "system/bin/faacc",
 }
 
 
@@ -153,9 +154,9 @@ def build(module_dir: pathlib.Path, out_zip: pathlib.Path) -> pathlib.Path:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Pack repo menjadi zip Magisk di build/.")
     ap.add_argument("-o", "--output", default=None,
-                    help="Nama file output di build/ (default: FACC2-v<version>.zip)")
+                    help="Nama file output di build/ (default: FAACC-v<version>.zip)")
     ap.add_argument("--no-version", action="store_true",
-                    help="Output build/FACC2.zip tanpa versi")
+                    help="Output build/FAACC.zip tanpa versi")
     args = ap.parse_args(argv)
 
     outdir = ROOT / "build"
@@ -165,9 +166,9 @@ def main(argv: list[str] | None = None) -> int:
         out = pathlib.Path(args.output)
         out = out if out.is_absolute() else (outdir / out.name)
     elif args.no_version:
-        out = outdir / "FACC2.zip"
+        out = outdir / "FAACC.zip"
     else:
-        out = outdir / ("FACC2-v%s.zip" % version)
+        out = outdir / ("FAACC-v%s.zip" % version)
 
     result = build(MODULE_DIR, out)
     size_kb = result.stat().st_size / 1024

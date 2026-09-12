@@ -1,0 +1,536 @@
+#!/system/bin/sh
+# faacc — CLI utama FAACC (Faa Agresive App Cache Cleaner)
+# CLI First: semua kemampuan WebUI & scheduler memanggil CLI ini.
+# Aman: CLI hanya memanggil clean_cache() dari core.sh, tidak ada rm sendiri.
+
+FAACC_VERSION="1.0.0"
+
+# Resolve MODDIR (Magisk / KernelSU / manual)
+MODDIR="${MODDIR:-}"
+if [ -z "$MODDIR" ]; then
+  for _m in /data/adb/modules/faacc /data/adb/modules_update/faacc; do
+    if [ -f "$_m/common/core.sh" ]; then MODDIR="$_m"; break; fi
+  done
+  unset _m
+fi
+# Fallback: lokasi script ini -> <mod>/system/bin/faacc => <mod>
+if [ -z "$MODDIR" ] || [ ! -f "$MODDIR/common/core.sh" ]; then
+  _here="$(dirname "$0" 2>/dev/null)"
+  case "$_here" in
+    */system/bin) MODDIR="$(dirname "$(dirname "$_here")")" ;;
+    */bin)        MODDIR="$(dirname "$(dirname "$_here")")" ;;
+  esac
+  unset _here
+fi
+# Fallback terakhir: direktori kerja saat testing di PC
+[ -f "$MODDIR/common/core.sh" ] || {
+  for _m in "$(pwd)" "$(pwd)/FAACC" "$(dirname "$0")/.." "$(dirname "$0")/../FAACC"; do
+    if [ -f "$_m/common/core.sh" ]; then MODDIR="$_m"; break; fi
+  done
+  unset _m
+}
+
+# shellcheck source=/dev/null
+[ -n "$MODDIR" ] && [ -f "$MODDIR/common/core.sh" ] && . "$MODDIR/common/core.sh"
+# Jika core gagal diload, coba path relatif
+command -v validate_package >/dev/null 2>&1 || {
+  for _c in ./common/core.sh ./FAACC/common/core.sh ../common/core.sh; do
+    [ -f "$_c" ] && . "$_c" 2>/dev/null && break
+  done
+  unset _c
+}
+command -v validate_package >/dev/null 2>&1 || {
+  echo "FATAL: core.sh tidak ditemukan. MODDIR=$MODDIR" >&2
+  exit 1
+}
+
+# Config
+FAACC_CONF_PERSIST="/data/adb/faacc/faacc.conf"
+FAACC_CONF_MOD="$MODDIR/config/faacc.conf"
+FAACC_CONF=""
+[ -f "$FAACC_CONF_PERSIST" ] && FAACC_CONF="$FAACC_CONF_PERSIST"
+[ -z "$FAACC_CONF" ] && [ -f "$FAACC_CONF_MOD" ] && FAACC_CONF="$FAACC_CONF_MOD"
+
+faacc_version() {
+  echo "FAACC v$FAACC_VERSION — Faa Agresive App Cache Cleaner by Faa Ramadhan"
+}
+
+faacc_help() {
+  cat <<'EOF'
+Penggunaan: faacc [PERINTAH] [OPSI]
+
+Perintah:
+  (tanpa argumen)        Menu interaktif
+  --scan [--json]        Pindai cache semua aplikasi (tanpa menghapus)
+  --clean [PKG] [--json] Bersihkan cache (semua app / satu package)
+  --status [--json]      Ringkasan: total cache, jumlah app, jadwal
+  --logs [--lines N]     Tampilkan log terakhir
+  --clogs [--json]       Hapus/reset semua log
+  --config               Tampilkan config aktif
+  --autoclean M [--json] Set interval auto-clean (M = 5-1440 menit)
+  -ac M [--json]         Alias --autoclean
+  --acon [--json]        Aktifkan auto-clean
+  --acoff [--json]       Matikan auto-clean
+  --acstatus [--json]    Status auto-clean (on/off + interval)
+  --lclean [--json]      Waktu cleanup terakhir
+  --version              Tampilkan versi
+  --help, -h             Bantuan ini
+
+Contoh:
+  su -c "faacc --scan"
+  su -c "faacc --clean"
+  su -c "faacc --clean com.android.chrome"
+  su -c "faacc --status --json"
+  su -c "faacc --autoclean 60"
+  su -c "faacc -ac 120"
+  su -c "faacc --acoff"
+EOF
+}
+
+# ---------- JSON helpers (tanpa dependensi jq) ----------
+_json_escape() {
+  echo "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+# ---------- SCAN ----------
+# Output teks + return via stdout. Mode --json: {"apps":N,"total_bytes":X,...}
+faacc_cmd_scan() {
+  _json=0
+  for _a in "$@"; do [ "$_a" = "--json" ] && _json=1; done
+  faacc_log_info "FAACC started (scan)"
+  _data=$(faacc_scan_all)
+  _apps=0; _total=0; _t_int=0; _t_cc=0; _t_ext=0; _with_cache=0
+  _json_items=""
+  while IFS= read -r _line; do
+    [ -z "$_line" ] && continue
+    # Split pipe TANPA fork cut (hemat ~6 fork per app).
+    IFS='|' read -r _pkg _bytes _bi _bc _be _dirs <<EOF_SPLIT
+$_line
+EOF_SPLIT
+    case "$_bytes" in ''|*[!0-9]*) _bytes=0 ;; esac
+    case "$_bi" in ''|*[!0-9]*) _bi=0 ;; esac
+    case "$_bc" in ''|*[!0-9]*) _bc=0 ;; esac
+    case "$_be" in ''|*[!0-9]*) _be=0 ;; esac
+    _apps=$((_apps + 1))
+    _total=$((_total + _bytes))
+    _t_int=$((_t_int + _bi)); _t_cc=$((_t_cc + _bc)); _t_ext=$((_t_ext + _be))
+    # String compare (!= "0"), bukan [ -gt 0 ] — aman dari overflow
+    # aritmetika 32-bit mksh untuk cache raksasa.
+    [ "$_bytes" != "0" ] && _with_cache=$((_with_cache + 1))
+    if [ "$_json" = "1" ]; then
+      # Charset pkg+dirs aman JSON (tanpa backslash/kutip) -> tanpa escape.
+      # human "0 B" literal bila nol (hemat 1 subshell per app kosong).
+      if [ "$_bytes" = "0" ]; then _hh="0 B"; else _hh=$(faacc_human_size "$_bytes"); fi
+      _json_items="$_json_items{\"package\":\"$_pkg\",\"bytes\":$_bytes,\"human\":\"$_hh\",\"dirs\":\"$_dirs\"},"
+    else
+      if [ "$_bytes" != "0" ]; then
+        printf "  %-40s %10s\n" "$_pkg" "$(faacc_human_size "$_bytes")"
+      fi
+    fi
+  done <<EOF_SCAN
+$_data
+EOF_SCAN
+  faacc_log_scan "$_apps packages detected, $(faacc_human_size "$_total") cache"
+  if [ "$_json" = "1" ]; then
+    _json_items=$(echo "$_json_items" | sed 's/,$//')
+    echo "{\"apps\":$_apps,\"apps_with_cache\":$_with_cache,\"total_bytes\":$_total,\"total_human\":\"$(faacc_human_size "$_total")\",\"internal_bytes\":$_t_int,\"code_cache_bytes\":$_t_cc,\"external_bytes\":$_t_ext,\"items\":[$_json_items]}"
+  else
+    echo ""
+    echo "Cache found : $(faacc_human_size "$_total")"
+    echo "  Internal  : $(faacc_human_size "$_t_int")"
+    echo "  Code cache: $(faacc_human_size "$_t_cc")"
+    echo "  Eksternal : $(faacc_human_size "$_t_ext")"
+    echo "Apps        : $_apps (ber-cache: $_with_cache)"
+  fi
+  unset _a _data _apps _total _t_int _t_cc _t_ext _with_cache _json_items _line _pkg _bytes _bi _bc _be _dirs _hh
+}
+
+# ---------- CLEAN ----------
+faacc_cmd_clean() {
+  _json=0; _target=""
+  for _a in "$@"; do
+    case "$_a" in
+      --json) _json=1 ;;
+      -*) ;;
+      *) _target="$_a" ;;
+    esac
+  done
+  faacc_require_root || { [ "$_json" = "1" ] && echo '{"ok":false,"error":"need root"}'; return 1; }
+  faacc_log_info "FAACC started (clean${_target:+ pkg=$_target})"
+
+  if [ -n "$_target" ]; then
+    if ! validate_package "$_target"; then
+      echo "❌ CLEANUP ABORTED - Reason: invalid package ($_target)" >&2
+      [ "$_json" = "1" ] && echo "{\"ok\":false,\"error\":\"invalid package\"}"
+      return 1
+    fi
+    if ! faacc_package_installed "$_target" 2>/dev/null; then
+      echo "Paket tidak ditemukan: $_target" >&2
+      [ "$_json" = "1" ] && echo "{\"ok\":false,\"error\":\"package not found\"}"
+      return 1
+    fi
+    _freed=$(clean_cache "$_target")
+    _rc=$?
+    if [ "$_rc" -eq 2 ]; then
+      echo "Tidak ada cache untuk $_target (sudah bersih)."
+      [ "$_json" = "1" ] && echo "{\"ok\":true,\"freed_bytes\":0,\"detail\":\"no cache\"}"
+      return 0
+    elif [ "$_rc" -ne 0 ]; then
+      [ "$_json" = "1" ] && echo '{"ok":false,"error":"cleanup failed"}'
+      return "$_rc"
+    fi
+    case "$_freed" in ''|*[!0-9]*) _freed=0 ;; esac
+    faacc_log_info "Freed $(faacc_human_size "$_freed")"
+    if [ "$_json" = "1" ]; then
+      echo "{\"ok\":true,\"freed_bytes\":$_freed,\"freed_human\":\"$(faacc_human_size "$_freed")\"}"
+    else
+      echo "✔ Dibersihkan: $_target — $(faacc_human_size "$_freed") dibebaskan."
+    fi
+    return 0
+  fi
+
+  # Bersihkan semua
+  _data=$(faacc_scan_all)
+  _apps=0; _freed_total=0; _cleaned=0; _failed=0
+  _json_items=""
+  while IFS= read -r _line; do
+    [ -z "$_line" ] && continue
+    IFS='|' read -r _pkg _bytes _rest <<EOF_SPLIT
+$_line
+EOF_SPLIT
+    case "$_bytes" in ''|*[!0-9]*) _bytes=0 ;; esac
+    [ "$_bytes" = "0" ] && continue
+    _apps=$((_apps + 1))
+    _out=$(clean_cache "$_pkg" 2>/dev/null)
+    _rc=$?
+    if [ "$_rc" -eq 0 ]; then
+      case "$_out" in ''|*[!0-9]*) _out=0 ;; esac
+      _freed_total=$((_freed_total + _out))
+      _cleaned=$((_cleaned + 1))
+      [ "$_json" = "0" ] && printf "  ✔ %-38s %10s\n" "$_pkg" "$(faacc_human_size "$_out")"
+      _json_items="$_json_items{\"package\":\"$_pkg\",\"freed\":$_out},"
+    else
+      _failed=$((_failed + 1))
+      [ "$_json" = "0" ] && printf "  ✘ %-38s gagal\n" "$_pkg"
+    fi
+  done <<EOF_CLEAN
+$_data
+EOF_CLEAN
+  # Simpan state last-run untuk scheduler/WebUI
+  mkdir -p /data/adb/faacc 2>/dev/null
+  date "+%Y-%m-%d %H:%M:%S" > /data/adb/faacc/last_run 2>/dev/null
+  echo "$_freed_total" > /data/adb/faacc/last_freed 2>/dev/null
+
+  faacc_log_info "Freed $(faacc_human_size "$_freed_total") ($_cleaned apps, $_failed failed)"
+  if [ "$_json" = "1" ]; then
+    _json_items=$(echo "$_json_items" | sed 's/,$//')
+    echo "{\"ok\":true,\"apps_cleaned\":$_cleaned,\"apps_failed\":$_failed,\"freed_bytes\":$_freed_total,\"freed_human\":\"$(faacc_human_size "$_freed_total")\",\"items\":[$_json_items]}"
+  else
+    echo ""
+    echo "Selesai: $_cleaned app dibersihkan, $(faacc_human_size "$_freed_total") dibebaskan."
+    [ "$_failed" -gt 0 ] && echo "Gagal: $_failed app."
+  fi
+  unset _a _target _data _apps _freed_total _cleaned _failed _json_items _line _pkg _bytes _out _rc _ep
+}
+
+# ---------- STATUS ----------
+faacc_cmd_status() {
+  _json=0
+  for _a in "$@"; do [ "$_a" = "--json" ] && _json=1; done
+  _data=$(faacc_scan_all)
+  _apps=0; _total=0; _t_int=0; _t_cc=0; _t_ext=0
+  while IFS= read -r _line; do
+    [ -z "$_line" ] && continue
+    IFS='|' read -r _ig _b _bi _bc _be _rest <<EOF_SPLIT
+$_line
+EOF_SPLIT
+    case "$_b" in ''|*[!0-9]*) _b=0 ;; esac
+    case "$_bi" in ''|*[!0-9]*) _bi=0 ;; esac
+    case "$_bc" in ''|*[!0-9]*) _bc=0 ;; esac
+    case "$_be" in ''|*[!0-9]*) _be=0 ;; esac
+    _apps=$((_apps + 1)); _total=$((_total + _b))
+    _t_int=$((_t_int + _bi)); _t_cc=$((_t_cc + _bc)); _t_ext=$((_t_ext + _be))
+  done <<EOF_STATUS
+$_data
+EOF_STATUS
+  _last="belum pernah"; _next="-"
+  [ -f /data/adb/faacc/last_run ] && _last=$(cat /data/adb/faacc/last_run 2>/dev/null)
+  _auto="0"; _interval="30"
+  [ -n "$FAACC_CONF" ] && [ -f "$FAACC_CONF" ] && {
+    _v=$(grep -E "^AUTO_CLEAN=" "$FAACC_CONF" 2>/dev/null | cut -d= -f2 | tr -d ' "')
+    [ -n "$_v" ] && _auto="$_v"
+    _v=$(grep -E "^INTERVAL_MINUTES=" "$FAACC_CONF" 2>/dev/null | cut -d= -f2 | tr -d ' "')
+    [ -n "$_v" ] && _interval="$_v"
+    unset _v
+  }
+  if [ "$_json" = "1" ]; then
+    _el=$(_json_escape "$_last")
+    echo "{\"apps\":$_apps,\"total_bytes\":$_total,\"total_human\":\"$(faacc_human_size "$_total")\",\"internal_bytes\":$_t_int,\"code_cache_bytes\":$_t_cc,\"external_bytes\":$_t_ext,\"last_cleanup\":\"$_el\",\"auto_clean\":\"$_auto\",\"interval_minutes\":\"$_interval\",\"version\":\"$FAACC_VERSION\"}"
+  else
+    echo "FAACC Status (AGRESIF: internal + code_cache + eksternal)"
+    echo "  Cache total : $(faacc_human_size "$_total")"
+    echo "    Internal  : $(faacc_human_size "$_t_int")"
+    echo "    Code cache: $(faacc_human_size "$_t_cc")"
+    echo "    Eksternal : $(faacc_human_size "$_t_ext")"
+    echo "  Apps        : $_apps"
+    echo "  Last cleanup: $_last"
+    echo "  Auto-clean  : $_auto (tiap $_interval mnt)"
+    echo "  Version     : $FAACC_VERSION"
+  fi
+  unset _a _data _apps _total _t_int _t_cc _t_ext _b _bi _bc _be _last _next _auto _interval
+}
+
+# ---------- LOGS ----------
+faacc_cmd_logs() {
+  _lines=50
+  _prev=""
+  for _a in "$@"; do
+    if [ "$_prev" = "--lines" ]; then _lines="$_a"; _prev=""; continue; fi
+    case "$_a" in --lines) _prev="--lines" ;; --lines=*) _lines=$(echo "$_a" | cut -d= -f2) ;; esac
+  done
+  case "$_lines" in ''|*[!0-9]*) _lines=50 ;; esac
+  _log="$FAACC_LOG_FILE"
+  command -v faacc_log >/dev/null 2>&1 || _log="/sdcard/faacc-log/faacc.log"
+  [ -f "$_log" ] || _log="/data/media/0/faacc-log/faacc.log"
+  if [ ! -f "$_log" ]; then
+    echo "(belum ada log)"
+    return 0
+  fi
+  tail -n "$_lines" "$_log" 2>/dev/null || cat "$_log"
+  unset _lines _prev _a _log
+}
+
+faacc_cmd_config() {
+  if [ -n "$FAACC_CONF" ] && [ -f "$FAACC_CONF" ]; then
+    echo "# Config aktif: $FAACC_CONF"
+    cat "$FAACC_CONF"
+  else
+    echo "(config tidak ditemukan)"
+  fi
+}
+
+# ---------- CONFIG READ/WRITE (auto-clean tanpa edit manual) ----------
+# Baca: faacc_conf_get KEY DEFAULT (tahan malformed, hanya baris KEY=nilai)
+faacc_conf_get() {
+  _k="$1"; _d="$2"; _v=""
+  if [ -n "$FAACC_CONF" ] && [ -f "$FAACC_CONF" ]; then
+    _v=$(grep -E "^${_k}=" "$FAACC_CONF" 2>/dev/null | tail -n1 | cut -d= -f2 | tr -d ' "')
+  fi
+  [ -z "$_v" ] && _v="$_d"
+  echo "$_v"
+  unset _k _d _v
+}
+
+# Tulis: faacc_conf_set KEY VALUE (selalu ke persist, pertahankan key lain)
+faacc_conf_set() {
+  _k="$1"; _v="$2"
+  _cf="$FAACC_CONF_PERSIST"
+  mkdir -p /data/adb/faacc 2>/dev/null || return 1
+  if [ ! -f "$_cf" ]; then
+    if [ -f "$FAACC_CONF_MOD" ]; then
+      cp -af "$FAACC_CONF_MOD" "$_cf" 2>/dev/null
+    else
+      printf "AUTO_CLEAN=1\nINTERVAL_MINUTES=30\n" > "$_cf" 2>/dev/null
+    fi
+  fi
+  _tmp="$_cf.tmp.$$"
+  grep -v -E "^${_k}=" "$_cf" 2>/dev/null > "$_tmp" 2>/dev/null
+  echo "${_k}=${_v}" >> "$_tmp"
+  cat "$_tmp" > "$_cf" 2>/dev/null || return 1
+  rm -f "$_tmp" 2>/dev/null
+  FAACC_CONF="$_cf"
+  unset _k _v _cf _tmp
+}
+
+# Tampilkan "60 menit (1 jam)" / "120 menit (2 jam)" / "30 menit"
+faacc_human_interval() {
+  _m="$1"
+  case "$_m" in ''|*[!0-9]*) _m=0 ;; esac
+  if [ "$_m" -ge 60 ] 2>/dev/null && [ $((_m % 60)) -eq 0 ] 2>/dev/null; then
+    echo "$_m menit ($((_m / 60)) jam)"
+  else
+    echo "$_m menit"
+  fi
+  unset _m
+}
+
+# ---------- AUTOCLEAN ----------
+faacc_cmd_autoclean() {
+  _json=0; _dur=""
+  for _a in "$@"; do
+    case "$_a" in --json) _json=1 ;; -*) ;; *) _dur="$_a" ;; esac
+  done
+  if [ -z "$_dur" ]; then
+    echo "Pakai: faacc --autoclean {menit}  (5-1440, 1440 = 24 jam)" >&2
+    echo "Contoh: faacc --autoclean 60  (= 1 jam)" >&2
+    return 1
+  fi
+  _ok=$(faacc_validate_interval "$_dur") || {
+    echo "Durasi tidak valid: $_dur (isi 5-1440 menit, maks 24 jam)" >&2
+    [ "$_json" = "1" ] && echo '{"ok":false,"error":"invalid duration (5-1440)"}'
+    return 1
+  }
+  faacc_require_root || { [ "$_json" = "1" ] && echo '{"ok":false,"error":"need root"}'; return 1; }
+  faacc_conf_set "AUTO_CLEAN" "1" || { echo "Gagal tulis config" >&2; return 1; }
+  faacc_conf_set "INTERVAL_MINUTES" "$_ok" || { echo "Gagal tulis config" >&2; return 1; }
+  faacc_log_info "Auto-clean ON, interval $(faacc_human_interval "$_ok") (via CLI)"
+  if [ "$_json" = "1" ]; then
+    echo "{\"ok\":true,\"auto_clean\":\"1\",\"interval_minutes\":\"$_ok\"}"
+  else
+    echo "✔ Auto-clean AKTIF, tiap $(faacc_human_interval "$_ok")."
+    echo "  Scheduler baca ulang tiap menit, tanpa reboot."
+  fi
+  unset _json _dur _a _ok
+}
+
+faacc_cmd_acon() {
+  _json=0
+  for _a in "$@"; do [ "$_a" = "--json" ] && _json=1; done
+  faacc_require_root || { [ "$_json" = "1" ] && echo '{"ok":false,"error":"need root"}'; return 1; }
+  faacc_conf_set "AUTO_CLEAN" "1" || { echo "Gagal tulis config" >&2; return 1; }
+  _iv=$(faacc_conf_get "INTERVAL_MINUTES" "30")
+  faacc_log_info "Auto-clean ON (via CLI)"
+  if [ "$_json" = "1" ]; then
+    echo "{\"ok\":true,\"auto_clean\":\"1\",\"interval_minutes\":\"$_iv\"}"
+  else
+    echo "✔ Auto-clean AKTIF (tiap $(faacc_human_interval "$_iv"))."
+  fi
+  unset _json _a _iv
+}
+
+faacc_cmd_acoff() {
+  _json=0
+  for _a in "$@"; do [ "$_a" = "--json" ] && _json=1; done
+  faacc_require_root || { [ "$_json" = "1" ] && echo '{"ok":false,"error":"need root"}'; return 1; }
+  faacc_conf_set "AUTO_CLEAN" "0" || { echo "Gagal tulis config" >&2; return 1; }
+  faacc_log_info "Auto-clean OFF (via CLI)"
+  if [ "$_json" = "1" ]; then
+    echo '{"ok":true,"auto_clean":"0"}'
+  else
+    echo "✔ Auto-clean MATI. Nyalakan lagi: faacc --acon"
+  fi
+  unset _json _a
+}
+
+faacc_cmd_acstatus() {
+  _json=0
+  for _a in "$@"; do [ "$_a" = "--json" ] && _json=1; done
+  _auto=$(faacc_conf_get "AUTO_CLEAN" "1")
+  _iv=$(faacc_conf_get "INTERVAL_MINUTES" "30")
+  if [ "$_json" = "1" ]; then
+    echo "{\"auto_clean\":\"$_auto\",\"interval_minutes\":\"$_iv\"}"
+  else
+    if [ "$_auto" = "1" ]; then
+      echo "Auto-clean : ON (tiap $(faacc_human_interval "$_iv"))"
+    else
+      echo "Auto-clean : OFF (interval tersimpan: $(faacc_human_interval "$_iv"))"
+    fi
+  fi
+  unset _json _a _auto _iv
+}
+
+# ---------- LAST CLEAN ----------
+faacc_cmd_lclean() {
+  _json=0
+  for _a in "$@"; do [ "$_a" = "--json" ] && _json=1; done
+  _last="belum pernah"
+  [ -f /data/adb/faacc/last_run ] && _last=$(cat /data/adb/faacc/last_run 2>/dev/null)
+  [ -z "$_last" ] && _last="belum pernah"
+  if [ "$_json" = "1" ]; then
+    _el=$(_json_escape "$_last")
+    echo "{\"last_cleanup\":\"$_el\"}"
+  else
+    echo "Last cleanup: $_last"
+  fi
+  unset _json _a _last _el
+}
+
+# ---------- CLEAN LOGS ----------
+faacc_cmd_clogs() {
+  _json=0
+  for _a in "$@"; do [ "$_a" = "--json" ] && _json=1; done
+  faacc_require_root || { [ "$_json" = "1" ] && echo '{"ok":false,"error":"need root"}'; return 1; }
+  _log="$FAACC_LOG_FILE"
+  command -v faacc_log >/dev/null 2>&1 || _log="/sdcard/faacc-log/faacc.log"
+  _dir=$(dirname "$_log" 2>/dev/null)
+  [ -z "$_dir" ] && _dir="/sdcard/faacc-log"
+  : > "$_log" 2>/dev/null
+  : > "$_dir/latest.log" 2>/dev/null
+  rm -f "$_dir"/archive/*.log 2>/dev/null
+  faacc_log_info "Logs cleared by user (via CLI)"
+  if [ "$_json" = "1" ]; then
+    echo '{"ok":true}'
+  else
+    echo "✔ Log direset: $_log"
+  fi
+  unset _json _a _log _dir
+}
+
+# ---------- MENU INTERAKTIF ----------
+faacc_menu() {
+  while true; do
+    _data=$(faacc_scan_all)
+    _apps=0; _total=0
+    while IFS= read -r _l; do
+      [ -z "$_l" ] && continue
+      IFS='|' read -r _ig2 _b _rest2 <<EOF_SPLIT
+$_l
+EOF_SPLIT
+      case "$_b" in ''|*[!0-9]*) _b=0 ;; esac
+      _apps=$((_apps + 1)); _total=$((_total + _b))
+    done <<EOF_MENU
+$_data
+EOF_MENU
+    echo ""
+    echo "FAACC - Faa Agresive App Cache Cleaner"
+    echo "Mode AGRESIF: cache internal + code_cache + cache eksternal"
+    echo ""
+    echo "Cache found : $(faacc_human_size "$_total")"
+    echo "Apps        : $_apps"
+    echo ""
+    echo "1. Scan"
+    echo "2. Clean"
+    echo "3. Status"
+    echo "4. Logs"
+    echo "5. Config"
+    echo "0. Exit"
+    echo ""
+    printf "Pilih: "
+    read -r _c
+    case "$_c" in
+      1) faacc_cmd_scan ;;
+      2)
+        printf "Package (kosongkan = semua): "
+        read -r _p
+        if [ -z "$_p" ]; then faacc_cmd_clean; else faacc_cmd_clean "$_p"; fi
+        ;;
+      3) faacc_cmd_status ;;
+      4) faacc_cmd_logs ;;
+      5) faacc_cmd_config ;;
+      0|q|Q|x) echo "Bye."; break ;;
+      *) echo "Pilihan tidak dikenal." ;;
+    esac
+  done
+  unset _data _apps _total _l _b _c _p
+}
+
+# ---------- ROUTER ----------
+case "$1" in
+  "") faacc_menu ;;
+  --scan) shift; faacc_cmd_scan "$@" ;;
+  --clean) shift; faacc_cmd_clean "$@" ;;
+  clean) shift; faacc_cmd_clean "$@" ;;
+  scan) shift; faacc_cmd_scan "$@" ;;
+  --status|status) shift; faacc_cmd_status "$@" ;;
+  --logs|logs) shift; faacc_cmd_logs "$@" ;;
+  --config|config) shift; faacc_cmd_config "$@" ;;
+  --autoclean|-ac) shift; faacc_cmd_autoclean "$@" ;;
+  --acon) shift; faacc_cmd_acon "$@" ;;
+  --acoff) shift; faacc_cmd_acoff "$@" ;;
+  --acstatus) shift; faacc_cmd_acstatus "$@" ;;
+  --lclean) shift; faacc_cmd_lclean "$@" ;;
+  --clogs|clogs) shift; faacc_cmd_clogs "$@" ;;
+  --version|-v|version) faacc_version ;;
+  --help|-h|help) faacc_help ;;
+  *) echo "Argumen tidak dikenal: $1"; echo ""; faacc_help; exit 1 ;;
+esac

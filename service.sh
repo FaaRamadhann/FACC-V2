@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# FACC V2 service.sh — dijalankan Magisk/KernelSU saat boot (late_start).
+# FAACC service.sh — dijalankan Magisk/KernelSU saat boot (late_start).
 # Loop: baca config -> tunggu -> eksekusi.
 
 MODDIR=${0%/*}
@@ -11,21 +11,21 @@ done
 # Beri waktu tambahan agar /sdcard ter-mount
 sleep 30
 
-CONF_PERSIST="/data/adb/facc2/facc.conf"
-CONF_MOD="$MODDIR/config/facc.conf"
-FACC_BIN="$MODDIR/system/bin/facc"
-[ -x "$FACC_BIN" ] || FACC_BIN="facc"
+CONF_PERSIST="/data/adb/faacc/faacc.conf"
+CONF_MOD="$MODDIR/config/faacc.conf"
+FAACC_BIN="$MODDIR/system/bin/faacc"
+[ -x "$FAACC_BIN" ] || FAACC_BIN="faacc"
 
 # Pastikan config persist ada
 if [ ! -f "$CONF_PERSIST" ] && [ -f "$CONF_MOD" ]; then
-  mkdir -p /data/adb/facc2 2>/dev/null
+  mkdir -p /data/adb/faacc 2>/dev/null
   cp -af "$CONF_MOD" "$CONF_PERSIST" 2>/dev/null
 fi
 
 # shellcheck source=/dev/null
 [ -f "$MODDIR/common/logger.sh" ] && . "$MODDIR/common/logger.sh"
 
-facc_log_info "FACC V2 service started"
+faacc_log_info "FAACC service started"
 
 while true; do
   AUTO_CLEAN=1
@@ -44,9 +44,9 @@ while true; do
   [ "$INTERVAL_MINUTES" -gt 1440 ] && INTERVAL_MINUTES=1440
 
   if [ "$AUTO_CLEAN" = "1" ]; then
-    MODDIR="$MODDIR" "$FACC_BIN" --clean >/dev/null 2>&1
-    date "+%Y-%m-%d %H:%M:%S" > /data/adb/facc2/last_run 2>/dev/null
-    facc_log_info "Scheduler run done, next in ${INTERVAL_MINUTES}m"
+    MODDIR="$MODDIR" "$FAACC_BIN" --clean >/dev/null 2>&1
+    date "+%Y-%m-%d %H:%M:%S" > /data/adb/faacc/last_run 2>/dev/null
+    faacc_log_info "Scheduler run done, next in ${INTERVAL_MINUTES}m"
   fi
 
   # Tidur per menit agar perubahan config cepat terbaca

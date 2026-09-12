@@ -1,6 +1,7 @@
-/* FACC WebUI app.js v1.0.2
- * Arsitektur: WebUI -> Interface (exec bridge) -> FACC Core (CLI `facc --* --json`)
+/* FAACC WebUI app.js v1.0.0 (AGRESIF)
+ * Arsitektur: WebUI -> Interface (exec bridge) -> FAACC Core (CLI `faacc --* --json`)
  * WebUI TIDAK punya logika cleanup sendiri. Semua aksi = panggil CLI.
+ * Mode AGRESIF: cache internal + code_cache + cache eksternal.
  *
  * Bridge yang didukung (urutan deteksi):
  *  1. ksu.exec(cmd)                 -> WebUI-Next / KernelSU Next / SukiSU /
@@ -89,14 +90,16 @@
     if (el) {
       el.textContent = "TIDAK TERHUBUNG ke root. Cara betulkan: (1) buka WebUI ini dari aplikasi manager " +
         "(MMRL / WebUI Next / KernelSU), JANGAN dari browser Chrome; (2) di MMRL v5.30+ izinkan " +
-        "\"JavaScript KernelSU API\" untuk module FACC; " +
+        "\"JavaScript KernelSU API\" untuk module FAACC; " +
         "(3) Magisk official manager TIDAK mendukung WebUI — pakai MMRL/WebUI Next. " +
         "Data di bawah ini contoh (mock), tombol tidak benar-benar membersihkan.";
     }
   }
 
-  // ---------- Mock data (Fase 6: UI statis dulu) ----------
-  var MOCK_STATUS = { apps: 47, total_bytes: 603 * 1048576, total_human: "603.0 MB", last_cleanup: "2026-09-05 07:30", auto_clean: "1", interval_minutes: "30", version: "1.0.4" };
+  // ---------- Mock data (mode agresif) ----------
+  var MOCK_STATUS = { apps: 47, total_bytes: 603 * 1048576, total_human: "603.0 MB",
+    internal_bytes: 300 * 1048576, code_cache_bytes: 103 * 1048576, external_bytes: 200 * 1048576,
+    last_cleanup: "2026-09-05 07:30", auto_clean: "1", interval_minutes: "30", version: "1.0.0" };
   var MOCK_SCAN = { apps: 47, apps_with_cache: 2, total_bytes: 603 * 1048576, total_human: "603.0 MB", items: [
     { package: "com.android.chrome", bytes: 190840832, human: "182.0 MB" },
     { package: "com.instagram.android", bytes: 441458688, human: "421.0 MB" }
@@ -106,9 +109,26 @@
     try { return JSON.parse(str); } catch (e) { return fallback; }
   }
 
+  function setKind(id, bytes) {
+    var el = $(id);
+    if (!el) return;
+    el.textContent = (bytes != null && bytes !== "") ? fmtBytes(bytes) : "~";
+  }
+
+  function fmtBytes(b) {
+    b = parseInt(b, 10) || 0;
+    if (b >= 1073741824) return (b / 1073741824).toFixed(2) + " GB";
+    if (b >= 1048576) return (b / 1048576).toFixed(1) + " MB";
+    if (b >= 1024) return Math.round(b / 1024) + " KB";
+    return b + " B";
+  }
+
   // ---------- Render ----------
   function renderStatus(s) {
     $("statCache").textContent = s.total_human || "~";
+    setKind("statInternal", s.internal_bytes);
+    setKind("statCode", s.code_cache_bytes);
+    setKind("statExt", s.external_bytes);
     $("statApps").textContent = s.apps != null ? s.apps : "~";
     $("statLast").textContent = s.last_cleanup || "-";
     $("statNext").textContent = (s.auto_clean === "1" || s.auto_clean === 1)
@@ -140,22 +160,24 @@
   }
 
   // ---------- Actions (Fase 7: interface ke core) ----------
-  // GET /status  -> facc --status --json
+  // GET /status  -> faacc --status --json
   function doStatus() {
-    return execCmd("su -c 'facc --status --json'").then(function (out) {
+    return execCmd("su -c 'faacc --status --json'").then(function (out) {
       renderStatus(safeJson(out, MOCK_STATUS));
     }).catch(function () {
       renderStatus(MOCK_STATUS); // fallback mock saat di browser
     });
   }
 
-  // POST /scan -> facc --scan --json
+  // POST /scan -> faacc --scan --json
   function doScan(btn) {
     if (btn) btn.disabled = true;
-    return execCmd("su -c 'facc --scan --json'").then(function (out) {
+    return execCmd("su -c 'faacc --scan --json'").then(function (out) {
       var data = safeJson(out, MOCK_SCAN);
       renderItems(data.items);
       renderStatus({ apps: data.apps, total_bytes: data.total_bytes, total_human: data.total_human,
+        internal_bytes: data.internal_bytes, code_cache_bytes: data.code_cache_bytes,
+        external_bytes: data.external_bytes,
         last_cleanup: $("statLast").textContent, auto_clean: $("cfgAuto").checked ? "1" : "0",
         interval_minutes: $("cfgInterval").value });
       showAlert("Scan selesai: " + data.total_human + " dari " + data.apps + " app.", true);
@@ -165,12 +187,12 @@
     }).finally(function () { if (btn) btn.disabled = false; });
   }
 
-  // POST /clean -> facc --clean [--pkg] --json
+  // POST /clean -> faacc --clean [--pkg] --json
   function doClean(pkg, btn) {
     var label = pkg || "semua app";
-    if (!pkg && !confirm("Bersihkan cache SEMUA aplikasi? (aman: tanpa hapus data)")) return Promise.resolve();
+    if (!pkg && !confirm("Bersihkan cache SEMUA aplikasi? (AGRESIF: internal + code_cache + eksternal, tanpa hapus data)")) return Promise.resolve();
     if (btn) btn.disabled = true;
-    var cmd = pkg ? ("su -c 'facc --clean " + pkg + " --json'") : "su -c 'facc --clean --json'";
+    var cmd = pkg ? ("su -c 'faacc --clean " + pkg + " --json'") : "su -c 'faacc --clean --json'";
     return execCmd(cmd).then(function (out) {
       var data = safeJson(out, { ok: true, freed_human: "?" });
       if (data.ok === false) showAlert("Gagal: " + (data.error || "unknown"), false);
@@ -181,18 +203,18 @@
     }).finally(function () { if (btn) btn.disabled = false; });
   }
 
-  // GET /logs -> facc --logs --lines 100
+  // GET /logs -> faacc --logs --lines 100
   function doLogs() {
-    return execCmd("su -c 'facc --logs --lines 100'").then(function (out) {
+    return execCmd("su -c 'faacc --logs --lines 100'").then(function (out) {
       $("logView").textContent = out || "(kosong)";
     }).catch(function () {
-      $("logView").textContent = "[07:30:01] [INFO] FACC started\n[07:30:02] [SCAN] 47 packages detected\n[07:30:03] [CLEAN] com.android.chrome - 182 MB\n[07:30:04] [CLEAN] com.instagram.android - 421 MB\n[07:30:04] [INFO] Freed 603 MB\n\n(mode mock)";
+      $("logView").textContent = "[07:30:01] [INFO] FAACC started\n[07:30:02] [SCAN] 47 packages detected\n[07:30:03] [CLEAN] com.android.chrome - 182 MB\n[07:30:04] [CLEAN] com.instagram.android - 421 MB\n[07:30:04] [INFO] Freed 603 MB\n\n(mode mock)";
     });
   }
 
-  // GET /config + POST /config -> cat & echo ke /data/adb/facc/facc.conf
+  // GET /config + POST /config -> cat & echo ke /data/adb/faacc/faacc.conf
   function doLoadConfig() {
-    return execCmd("su -c 'facc --config'").then(function (out) {
+    return execCmd("su -c 'faacc --config'").then(function (out) {
       $("cfgView").textContent = out;
     }).catch(function () {
       $("cfgView").textContent = "AUTO_CLEAN=1\nINTERVAL_MINUTES=30\n(mode mock)";
@@ -204,7 +226,7 @@
     var interval = parseInt($("cfgInterval").value, 10) || 30;
     if (interval < 5) interval = 5;
     if (interval > 1440) interval = 1440;
-    var cmd = "su -c 'printf \"AUTO_CLEAN=" + auto + "\\nINTERVAL_MINUTES=" + interval + "\\n\" > /data/adb/facc/facc.conf && cat /data/adb/facc/facc.conf'";
+    var cmd = "su -c 'printf \"AUTO_CLEAN=" + auto + "\\nINTERVAL_MINUTES=" + interval + "\\n\" > /data/adb/faacc/faacc.conf && cat /data/adb/faacc/faacc.conf'";
     return execCmd(cmd).then(function (out) {
       $("cfgView").textContent = out;
       showAlert("Config disimpan. Scheduler baca ulang tiap menit.", true);

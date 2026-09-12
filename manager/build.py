@@ -1,5 +1,5 @@
 """
-build.py — Build FACC Manager APK TANPA Android Studio/Gradle (versi Python).
+build.py — Build FAACC Manager APK TANPA Android Studio/Gradle (versi Python).
 Meniru Example-Build (ex-build.py): javac -> d8 -> aapt -> keystore ->
 zipalign -> apksigner. Error lebih jelas dibanding versi .bat.
 
@@ -25,7 +25,7 @@ BUILD_TOOLS = r"C:\AndroidSDK\build-tools\35.0.0"
 ANDROID_JAR = r"C:\AndroidSDK\platforms\android-34\android.jar"
 JAVA_HOME = r"C:\Program Files\Java\jdk-21.0.10"
 KEYSTORE = "debug.keystore"   # relatif ke root project
-KEY_ALIAS = "facc"
+KEY_ALIAS = "faacc"
 STOREPASS = "android"
 KEYPASS = "android"
 # -------------- akhir KONFIG ------------------------------------
@@ -100,8 +100,14 @@ def main():
     zipalign = os.path.join(BUILD_TOOLS, "zipalign.exe")
     apksigner = os.path.join(BUILD_TOOLS, "apksigner.bat")
     build = os.path.join(root, "build")
-    os.makedirs(os.path.join(build, "obj"), exist_ok=True)
-    os.makedirs(os.path.join(build, "dex"), exist_ok=True)
+    # Bersihkan obj/dex dulu (wajib tiap build: cegah class basi,
+    # mis. sisa package lama setelah rename, ikut ke-pack ke dex).
+    import shutil
+    for sub in ("obj", "dex"):
+        p = os.path.join(build, sub)
+        if os.path.isdir(p):
+            shutil.rmtree(p)
+        os.makedirs(p, exist_ok=True)
 
     print("[1/6] kumpulkan source...")
     sources = []
@@ -141,7 +147,7 @@ def main():
         run([keytool, "-genkeypair", "-keystore", ks, "-alias", KEY_ALIAS,
              "-keyalg", "RSA", "-keysize", "2048", "-validity", "10950",
              "-storepass", STOREPASS, "-keypass", KEYPASS,
-             "-dname", "CN=FACC Manager"], root)
+             "-dname", "CN=FAACC Manager"], root)
 
     print("[6/6] zipalign + apksigner...")
     run([zipalign, "-f", "4", os.path.join(build, "unsigned.apk"),

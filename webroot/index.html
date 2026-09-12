@@ -3,13 +3,13 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>FACC — Faa App Cache Cleaner</title>
+<title>FAACC — Faa Agresive App Cache Cleaner</title>
 <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">🧹 FACC</div>
-  <div class="subtitle">Faa App Cache Cleaner</div>
+  <div class="brand">🧹 FAACC</div>
+  <div class="subtitle">Faa Agresive App Cache Cleaner</div>
   <div class="conn"><span id="connDot" class="dot gray"></span><span id="connText">menghubungkan…</span></div>
 </header>
 
@@ -18,6 +18,18 @@
     <div class="card">
       <div class="label">Cache</div>
       <div class="value" id="statCache">~</div>
+    </div>
+    <div class="card">
+      <div class="label">Internal</div>
+      <div class="value small" id="statInternal">~</div>
+    </div>
+    <div class="card">
+      <div class="label">Code cache</div>
+      <div class="value small" id="statCode">~</div>
+    </div>
+    <div class="card">
+      <div class="label">Eksternal</div>
+      <div class="value small" id="statExt">~</div>
     </div>
     <div class="card">
       <div class="label">Apps</div>
@@ -66,13 +78,13 @@
         <input type="number" id="cfgInterval" min="5" max="1440" value="30" />
       </label>
       <button id="btnSaveCfg" class="btn small">Simpan (via CLI)</button>
-      <p class="hint">WebUI tidak punya logika sendiri — semua perintah diteruskan ke <code>facc</code> core via exec bridge.</p>
+      <p class="hint">WebUI tidak punya logika sendiri — semua perintah diteruskan ke <code>faacc</code> core via exec bridge.</p>
       <pre id="cfgView" class="log small">(config belum dimuat)</pre>
     </div>
   </section>
 </main>
 
-<footer>v1.0.4 • by Faa Ramadhan • aman: tanpa pm clear, tanpa hapus data</footer>
+<footer>v1.0.0 • by Faa Ramadhan • AGRESIF: internal + code_cache + eksternal • tanpa pm clear, tanpa hapus data</footer>
 <script src="js/app.js"></script>
 </body>
 </html>
